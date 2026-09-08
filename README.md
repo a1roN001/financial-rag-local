@@ -43,3 +43,13 @@ This project enables intelligent question-answering over financial documents (an
 - Multi-document comparison and summarization
 - Support for additional document formats (DOCX, XLSX)
 - Deployment optimization with model quantization
+
+## Dataset
+
+The dataset consists of annual financial reports (Form 10-K and Annual Reports) from major US tech companies for the fiscal year 2024-2025.
+
+**Sources:**
+- **SEC EDGAR Database**: Official 10-K filings for Microsoft, NVIDIA, and Alphabet.
+- **Company Investor Relations Pages**: Annual Report PDF for Amazon.
+
+All documents are publicly available and used solely for educational and demonstration purposes in this RAG project.
