@@ -116,17 +116,17 @@ def parse_pdf(pdf_path: Path, output_dir: Path) -> Optional[Dict[str, Any]]:
         # Save tables separately as CSV
         save_tables_to_csv(all_tables, output_dir, pdf_path.stem)
 
-        logger.info(f"✅ Saved: {json_filename} ({len(pages_data)} pages)")
+        logger.info(f"Saved: {json_filename} ({len(pages_data)} pages)")
         return result
 
     except pdfplumber.utils.PDFSyntaxError:
-        logger.error(f"❌ Corrupted PDF file: {pdf_path.name}. Skipping.")
+        logger.error(f"Corrupted PDF file: {pdf_path.name}. Skipping.")
         return None
     except PermissionError:
-        logger.error(f"❌ Permission denied reading: {pdf_path.name}. Check file locks.")
+        logger.error(f"Permission denied reading: {pdf_path.name}. Check file locks.")
         return None
     except Exception as e:
-        logger.error(f"❌ Unexpected error parsing {pdf_path.name}: {type(e).__name__}: {e}")
+        logger.error(f"Unexpected error parsing {pdf_path.name}: {type(e).__name__}: {e}")
         return None
 
 
@@ -158,14 +158,14 @@ if __name__ == "__main__":
     RAW_DIR = PROJECT_ROOT / "data" / "raw"
     PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 
-    print(f"📂 Looking for PDFs in: {RAW_DIR}")
+    print(f"Looking for PDFs in: {RAW_DIR}")
     
     if not RAW_DIR.exists():
         logger.error(f"Directory does not exist: {RAW_DIR}")
         exit(1)
         
     pdf_count = len(list(RAW_DIR.glob("*.pdf")))
-    print(f"🔍 Found {pdf_count} PDF file(s)")
+    print(f"Found {pdf_count} PDF file(s)")
     
     if pdf_count == 0:
         logger.warning("No .pdf files found! Check extensions and folder.")
@@ -174,7 +174,7 @@ if __name__ == "__main__":
     parsed_docs = parse_directory(str(RAW_DIR), str(PROCESSED_DIR))
 
     if parsed_docs:
-        print(f"\n📊 Summary:")
+        print(f"\nSummary:")
         for doc in parsed_docs:
             total_tables = sum(len(p["tables"]) for p in doc["pages"])
             print(f"  • {doc['filename']}: {doc['total_pages']} pages, {total_tables} tables")
