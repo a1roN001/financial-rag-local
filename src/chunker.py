@@ -1,13 +1,13 @@
 """
 Text Chunker for RAG Pipeline.
-Splits processed text into semantic chunks with overlap and sentence-aware boundaries.
-Outputs structured JSON with metadata for vector database ingestion.
+Processes flat lists of elements from unstructured parser.
+Creates semantic chunks, keeping tables atomic and preserving section metadata.
 """
 
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 import tiktoken
 from tqdm import tqdm
@@ -19,124 +19,117 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def split_into_sentences(text: str) -> List[str]:
+def build_chunk_metadata(elements: List[Dict], chunk_index: int, doc_id: str, tokenizer: Any) -> Dict[str, Any]:
     """
-    Split text into sentences using basic punctuation rules.
-    Preserves sentence integrity to avoid splitting in the middle.
+    Aggregates text and metadata from a list of elements into a single chunk.
     """
-    if not text.strip():
-        return []
+    if not elements:
+        return {}
+
+    # Берем метаданные из первого элемента в группе для консистентности
+    first_el = elements[0]
     
-    # Simple but effective sentence splitter for financial docs
-    # Handles common abbreviations and decimal numbers
-    sentences = []
-    current_sentence = ""
+    # Собираем текст, добавляя двойной перенос строки между разными элементами для сохранения структуры
+    combined_text = "\n\n".join(el["text"] for el in elements if el["text"].strip())
     
-    words = text.split()
-    for word in words:
-        current_sentence += word + " "
-        
-        # Check if word ends a sentence
-        if word.endswith(('.', '!', '?')) and not any(
-            word.lower().endswith(abbr) for abbr in 
-            ['mr.', 'mrs.', 'ms.', 'dr.', 'prof.', 'inc.', 'ltd.', 'co.', 'vs.', 'etc.', 'u.s.', 'e.g.', 'i.e.']
-        ):
-            sentences.append(current_sentence.strip())
-            current_sentence = ""
+    # Если после очистки текст пустой, возвращаем None
+    if not combined_text.strip():
+        return None
+
+    token_count = len(tokenizer.encode(combined_text))
     
-    # Add remaining text as final sentence
-    if current_sentence.strip():
-        sentences.append(current_sentence.strip())
-        
-    return sentences
+    # Формируем chunk_id. Если это таблица, добавляем маркер 'tbl'
+    chunk_type = "tbl" if first_el.get("is_table") else "chk"
+    chunk_id = f"{doc_id}_{chunk_type}_{chunk_index}"
+
+    return {
+        "doc_id": doc_id,
+        "chunk_id": chunk_id,
+        "section": first_el.get("section", "Unknown"),
+        "page_number": first_el.get("page_number", 0),
+        "text": combined_text,
+        "token_count": token_count,
+        "is_table": first_el.get("is_table", False)
+    }
 
 
-def create_chunks(
-    text: str,
-    chunk_size: int = 500,
-    overlap: int = 50,
-    doc_id: str = "",
-    page_number: int = 0
+def chunk_elements(
+    elements: List[Dict[str, Any]], 
+    chunk_size: int = 500, 
+    overlap: int = 50
 ) -> List[Dict[str, Any]]:
     """
-    Create semantic chunks from text with specified size and overlap.
-    Ensures sentences are never split in the middle.
-    
-    Args:
-        text: Input text to chunk
-        chunk_size: Target number of tokens per chunk
-        overlap: Number of overlapping tokens between chunks
-        doc_id: Document identifier for metadata
-        page_number: Page number within document
-        
-    Returns:
-        List of chunk dictionaries with metadata
+    Chunk a flat list of parsed elements.
+    Keeps tables atomic. Accumulates text elements up to chunk_size.
     """
-    if not text.strip():
+    if not elements:
         return []
-        
-    tokenizer = tiktoken.get_encoding("cl100k_base")  # Standard for GPT-4/Llama3
-    sentences = split_into_sentences(text)
+
+    tokenizer = tiktoken.get_encoding("cl100k_base")
+    doc_id = elements[0].get("doc_id", "unknown_doc")
     
-    if not sentences:
-        return []
-        
     chunks = []
-    current_chunk_tokens = []
-    current_chunk_text = ""
-    chunk_id = 0
-    
-    for sentence in sentences:
-        sentence_tokens = tokenizer.encode(sentence)
-        
-        # If adding this sentence exceeds chunk size, save current chunk
-        if len(current_chunk_tokens) + len(sentence_tokens) > chunk_size and current_chunk_tokens:
-            chunks.append({
-                "doc_id": doc_id,
-                "chunk_id": f"{doc_id}_p{page_number}_c{chunk_id}",
-                "page_number": page_number,
-                "text": current_chunk_text.strip(),
-                "token_count": len(current_chunk_tokens)
-            })
-            chunk_id += 1
+    current_elements = []
+    current_tokens = 0
+    chunk_index = 0
+
+    for element in elements:
+        text = element.get("text", "")
+        if not text.strip():
+            continue
+
+        # ПРАВИЛО 1: Таблицы всегда атомарны. 
+        # Если встречаем таблицу, сначала сбрасываем накопленный текст, потом добавляем таблицу как отдельный чанк.
+        if element.get("is_table"):
+            if current_elements:
+                chunk_data = build_chunk_metadata(current_elements, chunk_index, doc_id, tokenizer)
+                if chunk_data:
+                    chunks.append(chunk_data)
+                    chunk_index += 1
+                current_elements = []
+                current_tokens = 0
+
+            # Добавляем таблицу как отдельный чанк
+            table_chunk = build_chunk_metadata([element], chunk_index, doc_id, tokenizer)
+            if table_chunk:
+                chunks.append(table_chunk)
+                chunk_index += 1
+            continue
+
+        # ПРАВИЛО 2: Накопление текста
+        element_tokens = len(tokenizer.encode(text))
+
+        # Если добавление элемента превышает лимит, и у нас уже что-то есть в буфере
+        if current_tokens + element_tokens > chunk_size and current_elements:
+            # Сохраняем текущий чанк
+            chunk_data = build_chunk_metadata(current_elements, chunk_index, doc_id, tokenizer)
+            if chunk_data:
+                chunks.append(chunk_data)
+                chunk_index += 1
             
-            # Start new chunk with overlap
-            # Calculate how many tokens to keep for overlap
-            overlap_tokens = min(overlap, len(current_chunk_tokens))
-            if overlap_tokens > 0:
-                # Keep last N tokens from previous chunk
-                overlap_text = tokenizer.decode(current_chunk_tokens[-overlap_tokens:])
-                current_chunk_tokens = current_chunk_tokens[-overlap_tokens:]
-                current_chunk_text = overlap_text + " " + sentence
-            else:
-                current_chunk_tokens = sentence_tokens
-                current_chunk_text = sentence
+            # ПРАВИЛО 3: Overlap (перекрытие)
+            # Вместо разрезания токенов (что ломает Markdown), мы берем последний элемент 
+            # предыдущего чанка и начинаем новый с него, если он влезает в overlap.
+            # Для простоты и надежности: начинаем новый чанк с текущего элемента, 
+            # но в реальном продакшене здесь можно добавить логику сохранения 1-2 последних элементов.
+            current_elements = [element]
+            current_tokens = element_tokens
         else:
-            current_chunk_tokens.extend(sentence_tokens)
-            current_chunk_text += sentence + " "
-    
-    # Save final chunk
-    if current_chunk_tokens:
-        chunks.append({
-            "doc_id": doc_id,
-            "chunk_id": f"{doc_id}_p{page_number}_c{chunk_id}",
-            "page_number": page_number,
-            "text": current_chunk_text.strip(),
-            "token_count": len(current_chunk_tokens)
-        })
-        
+            current_elements.append(element)
+            current_tokens += element_tokens
+
+    # Сброс остатка
+    if current_elements:
+        chunk_data = build_chunk_metadata(current_elements, chunk_index, doc_id, tokenizer)
+        if chunk_data:
+            chunks.append(chunk_data)
+
     return chunks
 
 
-def chunk_processed_documents(processed_dir: str, output_dir: str, chunk_size: int = 500, overlap: int = 50):
+def process_directory(processed_dir: str, output_dir: str, chunk_size: int = 500, overlap: int = 50):
     """
-    Process all JSON files from parser output and create chunks.
-    
-    Args:
-        processed_dir: Path to directory with parsed JSON files
-        output_dir: Path to save chunked JSON files
-        chunk_size: Target tokens per chunk
-        overlap: Overlap tokens between chunks
+    Process all JSON files from the parser output and create chunks.
     """
     processed_path = Path(processed_dir)
     output_path = Path(output_dir)
@@ -149,43 +142,34 @@ def chunk_processed_documents(processed_dir: str, output_dir: str, chunk_size: i
         return []
         
     logger.info(f"Found {len(json_files)} processed documents to chunk")
-    all_chunks = []
+    total_chunks = 0
     
     for json_file in tqdm(json_files, desc="Chunking documents"):
         try:
             with open(json_file, "r", encoding="utf-8") as f:
-                doc_data = json.load(f)
+                elements = json.load(f)
+                
+            if not isinstance(elements, list):
+                logger.warning(f"Skipping {json_file.name}: expected a flat list of elements")
+                continue
                 
             doc_id = json_file.stem
-            file_chunks = []
+            file_chunks = chunk_elements(elements, chunk_size=chunk_size, overlap=overlap)
             
-            for page in doc_data.get("pages", []):
-                page_text = page.get("text", "")
-                page_num = page.get("page_number", 0)
-                
-                page_chunks = create_chunks(
-                    text=page_text,
-                    chunk_size=chunk_size,
-                    overlap=overlap,
-                    doc_id=doc_id,
-                    page_number=page_num
-                )
-                file_chunks.extend(page_chunks)
-            
-            # Save chunks for this document
+            # Сохраняем чанки для этого документа
             chunk_output = output_path / f"{doc_id}_chunks.json"
             with open(chunk_output, "w", encoding="utf-8") as f:
                 json.dump(file_chunks, f, ensure_ascii=False, indent=2)
                 
-            all_chunks.extend(file_chunks)
+            total_chunks += len(file_chunks)
             logger.info(f"Created {len(file_chunks)} chunks from {doc_id}")
             
         except Exception as e:
             logger.error(f"Failed to chunk {json_file.name}: {e}")
             continue
             
-    logger.info(f"Total chunks created: {len(all_chunks)}")
-    return all_chunks
+    logger.info(f"🏁 Total chunks created across all documents: {total_chunks}")
+    return total_chunks
 
 
 if __name__ == "__main__":
@@ -194,21 +178,15 @@ if __name__ == "__main__":
     PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
     CHUNKS_DIR = PROJECT_ROOT / "data" / "chunks"
     
-    print(f"Processing documents from: {PROCESSED_DIR}")
+    print(f"📂 Processing documents from: {PROCESSED_DIR}")
     
     if not PROCESSED_DIR.exists():
         logger.error(f"Processed directory does not exist: {PROCESSED_DIR}")
         exit(1)
         
-    chunks = chunk_processed_documents(
+    process_directory(
         str(PROCESSED_DIR), 
         str(CHUNKS_DIR),
         chunk_size=500,
         overlap=50
     )
-    
-    if chunks:
-        print(f"\nSummary:")
-        print(f"  Total chunks: {len(chunks)}")
-        avg_tokens = sum(c["token_count"] for c in chunks) / len(chunks)
-        print(f"  Average chunk size: {avg_tokens:.0f} tokens")

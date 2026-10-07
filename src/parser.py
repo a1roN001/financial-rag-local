@@ -1,17 +1,22 @@
 """
 PDF Parser for Financial Reports (10-K).
-Extracts text and tables from PDF files using pdfplumber.
-Outputs structured JSON and separate CSV files for tables.
+Extracts text, tables, and structure from PDF files using unstructured.
+Outputs structured JSON with metadata for the chunking pipeline.
 """
-
-import csv
+import os
 import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
 
-import pdfplumber
-from tqdm import tqdm
+from unstructured.partition.pdf import partition_pdf
+
+# Настройка Tesseract для Windows (если он установлен по этому пути)
+os.environ["PATH"] += os.pathsep + r"C:/Program Files/Tesseract-OCR"
+os.environ["OCR_AGENT"] = "tesseract"
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -21,116 +26,63 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def extract_page_data(page) -> Dict[str, Any]:
+def parse_pdf(pdf_path: Path, output_dir: Path) -> Optional[List[Dict[str, Any]]]:
     """
-    Extract text and tables from a single PDF page.
-    Handles encoding errors gracefully by replacing problematic characters.
-    """
-    try:
-        text = page.extract_text() or ""
-    except Exception as e:
-        logger.warning(f"Encoding error on page {page.page_number}: {e}. Using fallback extraction.")
-        text = page.extract_text(layout=True) or ""  # Fallback with layout mode
-
-    tables = []
-    raw_tables = page.extract_tables()
-    
-    for table in raw_tables:
-        if table and len(table) > 0:  # Skip empty tables
-            tables.append({"rows": table})
-
-    return {
-        "page_number": page.page_number,
-        "text": text.strip(),
-        "tables": tables
-    }
-
-
-def save_tables_to_csv(tables: List[Dict], output_path: Path, filename_stem: str):
-    """
-    Save all extracted tables from a PDF into a single CSV file.
-    Each table is separated by an empty row and a header comment.
-    """
-    if not tables:
-        return
-        
-    csv_path = output_path / f"{filename_stem}_tables.csv"
-    
-    try:
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            
-            for i, table_data in enumerate(tables):
-                rows = table_data["rows"]
-                if rows:
-                    # Add separator between tables
-                    if i > 0:
-                        writer.writerow([]) 
-                    
-                    # Write table rows
-                    for row in rows:
-                        # Handle None values in cells
-                        clean_row = [str(cell) if cell is not None else "" for cell in row]
-                        writer.writerow(clean_row)
-                        
-        logger.info(f"💾 Saved {len(tables)} tables to {csv_path.name}")
-        
-    except Exception as e:
-        logger.error(f"Failed to save CSV for {filename_stem}: {e}")
-
-
-def parse_pdf(pdf_path: Path, output_dir: Path) -> Optional[Dict[str, Any]]:
-    """
-    Parse a single PDF file. Saves JSON structure and separate CSV for tables.
-    Handles corrupted files and encoding issues gracefully.
+    Parse a single PDF file using unstructured.
+    Extracts elements, identifies sections by titles, and saves to JSON.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    json_filename = f"{pdf_path.stem}.json"
-    json_path = output_dir / json_filename
-
+    
     try:
         logger.info(f"Parsing: {pdf_path.name}")
-        pages_data = []
-        all_tables = []
-
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in tqdm(pdf.pages, desc=f"  Pages ({pdf_path.name})", leave=False):
-                try:
-                    page_info = extract_page_data(page)
-                    pages_data.append(page_info)
-                    all_tables.extend(page_info["tables"])
-                except Exception as e:
-                    logger.error(f"Error processing page {page.page_number} of {pdf_path.name}: {e}")
-                    continue  # Skip broken page, continue with next
-
-        result = {
-            "filename": pdf_path.name,
-            "total_pages": len(pages_data),
-            "pages": pages_data
-        }
-
-        # Save main JSON
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-        # Save tables separately as CSV
-        save_tables_to_csv(all_tables, output_dir, pdf_path.stem)
-
-        logger.info(f"Saved: {json_filename} ({len(pages_data)} pages)")
-        return result
-
-    except pdfplumber.utils.PDFSyntaxError:
-        logger.error(f"Corrupted PDF file: {pdf_path.name}. Skipping.")
-        return None
-    except PermissionError:
-        logger.error(f"Permission denied reading: {pdf_path.name}. Check file locks.")
-        return None
+        
+        # strategy="fast" использует pdfminer/pdfplumber под капотом, но дает нам категоризацию.
+        # Если нужно лучшее качество таблиц, поменяй на strategy="hi_res" (требует больше RAM/GPU)
+        elements = partition_pdf(
+            filename=str(pdf_path),
+            strategy="fast",
+            infer_table_structure=True
+        )
+        
+        parsed_elements = []
+        current_section = "Unknown"
+        doc_id = pdf_path.stem
+        
+        for element in elements:
+            # Определяем секцию по заголовкам (Title или Header)
+            if element.category in ["Title", "Header"]:
+                # Обновляем текущую секцию, если это не колонтитул (проверка по длине или ключевым словам опциональна)
+                current_section = str(element).strip()
+            
+            # Пропускаем служебный мусор
+            if element.category in ["Footer", "PageNumber", "EmailAddress", "Image"]:
+                continue
+            
+            parsed_elements.append({
+                "doc_id": doc_id,
+                "section": current_section,
+                "element_type": element.category,
+                "text": str(element),  # Таблицы автоматически конвертируются в Markdown
+                "page_number": getattr(element.metadata, "page_number", None) or 0,
+                "is_table": element.category == "Table"
+            })
+        
+        # Сохранение в JSON
+        output_file = output_dir / f"{doc_id}.json"
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(parsed_elements, f, ensure_ascii=False, indent=2)
+        
+        table_count = sum(1 for el in parsed_elements if el["is_table"])
+        logger.info(f"Saved: {output_file.name} ({len(parsed_elements)} elements, {table_count} tables)")
+        
+        return parsed_elements
+        
     except Exception as e:
-        logger.error(f"Unexpected error parsing {pdf_path.name}: {type(e).__name__}: {e}")
+        logger.error(f"Failed to parse {pdf_path.name}: {type(e).__name__}: {e}")
         return None
 
 
-def parse_directory(input_dir: str, output_dir: str) -> List[Dict[str, Any]]:
+def parse_directory(input_dir: str, output_dir: str) -> List[List[Dict[str, Any]]]:
     """Parse all PDF files in the input directory."""
     input_path = Path(input_dir)
     output_path = Path(output_dir)
@@ -148,7 +100,7 @@ def parse_directory(input_dir: str, output_dir: str) -> List[Dict[str, Any]]:
         if result is not None:
             results.append(result)
 
-    logger.info(f"Done! Successfully parsed {len(results)}/{len(pdf_files)} files")
+    logger.info(f"🏁 Done! Successfully parsed {len(results)}/{len(pdf_files)} files")
     return results
 
 
@@ -164,19 +116,21 @@ if __name__ == "__main__":
         logger.error(f"Directory does not exist: {RAW_DIR}")
         exit(1)
         
-    pdf_count = len(list(RAW_DIR.glob("*.pdf")))
-    print(f"Found {pdf_count} PDF file(s)")
+    pdf_files = list(RAW_DIR.glob("*.pdf"))
+    print(f"Found {len(pdf_files)} PDF file(s)")
     
-    if pdf_count == 0:
+    if not pdf_files:
         logger.warning("No .pdf files found! Check extensions and folder.")
         exit(1)
 
+    # ЗАПУСК ПАРСИНГА
     parsed_docs = parse_directory(str(RAW_DIR), str(PROCESSED_DIR))
 
     if parsed_docs:
-        print(f"\nSummary:")
+        print("\n📊 Summary:")
         for doc in parsed_docs:
-            total_tables = sum(len(p["tables"]) for p in doc["pages"])
-            print(f"  • {doc['filename']}: {doc['total_pages']} pages, {total_tables} tables")
+            total_elements = len(doc)
+            total_tables = sum(1 for el in doc if el.get("is_table"))
+            print(f"  • {doc[0]['doc_id']}.json: {total_elements} elements, {total_tables} tables")
     else:
-        logger.error("No documents were successfully parsed.")
+        logger.error("No documents were successfully parsed. Check logs for errors.")
