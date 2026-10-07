@@ -178,7 +178,7 @@ if __name__ == "__main__":
     PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
     CHUNKS_DIR = PROJECT_ROOT / "data" / "chunks"
     
-    print(f"📂 Processing documents from: {PROCESSED_DIR}")
+    print(f"Processing documents from: {PROCESSED_DIR}")
     
     if not PROCESSED_DIR.exists():
         logger.error(f"Processed directory does not exist: {PROCESSED_DIR}")

@@ -70,8 +70,8 @@ def create_schema(connection: Any, table_name: str, dimension: int) -> None:
         cursor.execute(
             sql.SQL(
                 "CREATE INDEX IF NOT EXISTS {index} "
-                "ON {table} USING hsnw (embedding vector_cosine_ops) "
-                "WITH (m = 16, ef_contruction = 64)"
+                "ON {table} USING hnsw (embedding vector_cosine_ops) "
+                "WITH (m = 16, ef_construction = 64)"
             ).format(
                 index=sql.Identifier(f"{table_name}_embedding_idx"),
                 table=table,
