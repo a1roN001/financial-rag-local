@@ -32,10 +32,12 @@ def create_schema(connection: Any, table_name: str, dimension: int) -> None:
                 CREATE TABLE IF NOT EXISTS {table} (
                     id SERIAL PRIMARY KEY,
                     document_id VARCHAR(255) NOT NULL,
+                    section VARCHAR(255),
                     page_number INT NOT NULL,
                     chunk_id VARCHAR(255) UNIQUE NOT NULL,
                     token_count INT NOT NULL,
                     text TEXT NOT NULL,
+                    is_table BOOLEAN DEFAULT FALSE,
                     embedding VECTOR({dimension}) NOT NULL
                 )
                 """
@@ -68,8 +70,8 @@ def create_schema(connection: Any, table_name: str, dimension: int) -> None:
         cursor.execute(
             sql.SQL(
                 "CREATE INDEX IF NOT EXISTS {index} "
-                "ON {table} USING ivfflat (embedding vector_cosine_ops) "
-                "WITH (lists = 100)"
+                "ON {table} USING hsnw (embedding vector_cosine_ops) "
+                "WITH (m = 16, ef_contruction = 64)"
             ).format(
                 index=sql.Identifier(f"{table_name}_embedding_idx"),
                 table=table,
