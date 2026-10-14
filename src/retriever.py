@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Dict, List
 from db import vector_literal
+from sentence_transformers import SentenceTransformer
 
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def retrieve_similar_chunks(
     connection: Any,
-    model: Any,
+    model: SentenceTransformer,
     query_text: str,
     table_name: str = "document_chunks",
     top_k: int = 5,
@@ -21,9 +22,7 @@ def retrieve_similar_chunks(
     if top_k < 1:
         raise ValueError("top_k must be greater than zero")
     
-    from sentence_transformers import SentenceTransformer
-    vectorizer = SentenceTransformer(model)
-    query_embedding = vectorizer.encode(query_text, normalize_embeddings=True)
+    query_embedding = model.encode(query_text, normalize_embeddings=True)
     query_vector = vector_literal(query_embedding)
 
     from psycopg2 import sql
