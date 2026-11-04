@@ -127,7 +127,7 @@ if __name__ == "__main__":
     parsed_docs = parse_directory(str(RAW_DIR), str(PROCESSED_DIR))
 
     if parsed_docs:
-        print("\n📊 Summary:")
+        print("\n Summary:")
         for doc in parsed_docs:
             total_elements = len(doc)
             total_tables = sum(1 for el in doc if el.get("is_table"))

@@ -8,6 +8,7 @@ from retriever import retrieve_similar_chunks
 from db import connect
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+from tenacity import retry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -20,19 +21,22 @@ def build_prompt(context: str, question: str) -> str:
 
     instructions = 'Ты - профессиональный финансовый аналитик, отвечай соотвествующе\n" \
     "Если в представленных документах нет ответа на заданный вопрос, не выдумывай, так и скажи что ответа нет \n" \
-    "Если найдешь ответ в предоставленном контексте, выведи страницу документа на которой он есть\n" \
+    "Если найдешь ответ в предоставленном контексте, выведи страницу документа на которой он есть и название самого документа\n" \
     "Вот контекст твоего ответа: '
 
     for dic in context:
         instructions += f"Document: {dic['document_id']}, Page: {dic['page_number']}, text: {dic["text"]}"
     return instructions
-
+# Добавить тайм ауты на call ollama и генерацию llm (60 и 10 секунд)
+@retry(wait=wait_exponential(multiplier=1, min=1, max=4))
 def call_ollama(prompt: str, model: str = "qwen2.5:7b") -> str:
     from ollama import chat
+    from ollama import Client
     from ollama import ChatResponse
     """Call Ollama API and return generated text."""
 
-    response : ChatResponse = chat(model=model, messages=[{'role': 'user', 'content': prompt}])    
+    ollama_client = Client(timeout=10)
+    response : ChatResponse = ollama_client.chat(model=model, messages=[{'role': 'user', 'content': prompt}])    
     return response.message.content
 
 def answer_question(
@@ -53,7 +57,7 @@ def answer_question(
     prompt = build_prompt(similar_chunks, question)
     response = call_ollama(prompt)
 
-    return {'Answer:':response+'\n'}
+    return {'Answer:':response + '\n'}
 
 if __name__ == "__main__":
     while True:
