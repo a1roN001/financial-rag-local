@@ -37,6 +37,7 @@ def retrieve_similar_chunks(
         """
     ).format(table=sql.Identifier(table_name))
     with connection.cursor() as cursor:
+        cursor.execute("SET statement_timeout = 5000;")
         cursor.execute(query, (query_vector, query_vector, top_k))
         columns = [description[0] for description in cursor.description]
         results = [dict(zip(columns, row)) for row in cursor.fetchall()]
