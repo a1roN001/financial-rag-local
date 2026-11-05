@@ -8,7 +8,7 @@ from retriever import retrieve_similar_chunks
 from db import connect
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-from tenacity import retry, wait_exponential
+from tenacity import retry, wait_exponential, stop_after_attempt
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -35,11 +35,11 @@ def build_prompt(context: List[Dict[str, Any]], question: str) -> str:
     return instructions
 
 
-@retry(wait=wait_exponential(multiplier=1, min=1, max=4))
+@retry(wait=wait_exponential(multiplier=1, min=1, max=4), stop=stop_after_attempt(3))
 def call_ollama(prompt: str, model: str = "qwen2.5:7b") -> str:
     from ollama import Client
     """Call Ollama API and return generated text."""
-
+    
     ollama_client = Client(timeout=10)
     response = ollama_client.chat(
         model=model,

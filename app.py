@@ -54,7 +54,7 @@ def main() -> None:
         page_icon="📊",
         layout="centered",
     )
-    st.title("Financial RAG")
+    st.title("Financial RAG local")
     st.caption("Вопросы к финансовым отчетам через локальную LLM")
 
     with st.sidebar:
