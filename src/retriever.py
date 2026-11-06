@@ -22,7 +22,7 @@ def retrieve_similar_chunks(
     if top_k < 1:
         raise ValueError("top_k must be greater than zero")
     
-    query_embedding = model.encode(query_text, normalize_embeddings=True)
+    query_embedding = model.encode(f"query: {query_text}", normalize_embeddings=True)
     query_vector = vector_literal(query_embedding)
 
     from psycopg2 import sql

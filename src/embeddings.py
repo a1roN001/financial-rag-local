@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
         default=project_root / "data" / "chunks",
         help="Directory containing *_chunks.json files",
     )
-    parser.add_argument("--model", default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument("--model", default="intfloat/multilingual-e5-small")
     parser.add_argument("--table", default="document_chunks")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--database-url", default=os.getenv("DATABASE_URL"))

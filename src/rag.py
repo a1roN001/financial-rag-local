@@ -13,7 +13,7 @@ from tenacity import retry, wait_exponential, stop_after_attempt
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
+EMBEDDING_MODEL = SentenceTransformer('intfloat/multilingual-e5-small')
 SIMILARITY_THRESHOLD = 0.4
 
 def build_prompt(context: List[Dict[str, Any]], question: str) -> str:
