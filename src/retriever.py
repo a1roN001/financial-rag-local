@@ -1,122 +1,99 @@
-"""Similarity search over stored document chunk embeddings."""
-
-import os
-os.environ["HF_HOME"] = "C:\\hf_cache"
-import re
+"""Hybrid retrieval: dense (pgvector) + lexical (BM25), fused via RRF, reranked."""
 import logging
-from typing import Any, Dict, List
+from typing import Dict, List, Tuple
+
 from psycopg2 import sql
+
+from config import RECALL_K, RERANK_K, RRF_K, USE_BM25, USE_VECTOR, RERANKER_MODEL_NAME
+from bm25_index import get_bm25_index
 from db import vector_literal
-from sentence_transformers import CrossEncoder
-from dotenv import load_dotenv
+from sentence_transformers import  CrossEncoder
+
+RERANKER_MODEL = CrossEncoder(RERANKER_MODEL_NAME)
 
 logger = logging.getLogger(__name__)
-RERANKER_MODEL = CrossEncoder("BAAI/bge-reranker-v2-m3")
-DB_TIMEOUT_MS = '5000'
-load_dotenv()
-COLUMNS = sql.SQL(
-    "t.document_id, t.page_number, t.chunk_id, t.token_count, "
-    "t.text, t.section, t.is_table"
-)
-def extract_fts_tokens(user_query: str) -> str:
-    """Извлекает числа, годы, тикеры и латинские слова для FTS."""
-    tokens = re.findall(r'\b[A-Za-z0-9]+(?:[.,][0-9]+)?\b', user_query)
-    # Убираем дубликаты с сохранением порядка
-    unique_tokens = list(dict.fromkeys(tokens))
-    return " OR ".join(unique_tokens)
 
-def retrieve_similar_chunks(
-    connection: Any,
-    model,
-    query_text: str,
-    top_k: int,
-    table_name: str = "document_chunks"
-) -> List[Dict[str, Any]]:
-    """Retrieve the top-k chunks using Hybrid Search (Vector + FTS) or fallback to Vector."""
+_VECTOR_SQL = sql.SQL("""
+    SELECT chunk_id,
+           1 - (embedding <=> %(vec)s::vector) AS similarity,
+           ROW_NUMBER() OVER (ORDER BY embedding <=> %(vec)s::vector) AS rank
+    FROM {table}
+    ORDER BY embedding <=> %(vec)s::vector
+    LIMIT %(k)s
+""")
+
+_META_SQL = sql.SQL("""
+    SELECT chunk_id, document_id, page_number, token_count, text, section, is_table
+    FROM {table}
+    WHERE chunk_id = ANY(%(ids)s)
+""")
+
+
+def _vector_rank(connection, model, query_text, table_name) -> Dict[str, Tuple[float, int]]:
+    emb = model.encode(f"query: {query_text}", normalize_embeddings=True)
+    out: Dict[str, Tuple[float, int]] = {}
+    q = _VECTOR_SQL.format(table=sql.Identifier(table_name))
+    with connection.cursor() as cur:
+        cur.execute(q, {"vec": vector_literal(emb), "k": RECALL_K})
+        for cid, sim, rank in cur.fetchall():
+            out[cid] = (float(sim), int(rank))
+    return out
+
+
+def _bm25_rank(query_text) -> Dict[str, int]:
+    # Пусто для чисто кириллического вопроса -> RRF деградирует до vector-only
+    return {cid: r for cid, r in get_bm25_index().rank(query_text, RECALL_K)}
+
+
+def retrieve_similar_chunks(connection, model, query_text, top_k, table_name="document_chunks"):
     if not query_text.strip():
         raise ValueError("query_text must not be empty")
     if top_k < 1:
         raise ValueError("top_k must be greater than zero")
 
-    query_embedding = model.encode(f"query: {query_text}", normalize_embeddings=True)
-    query_vector = vector_literal(query_embedding)
+    vec = _vector_rank(connection, model, query_text, table_name) if USE_VECTOR else {}
+    lex = _bm25_rank(query_text) if USE_BM25 else {}
 
-    # Извлекаем language-neutral токены из исходного вопроса
-    fts_query = extract_fts_tokens(query_text)
+    union = set(vec) | set(lex)
+    if not union:
+        return []
 
-    if fts_query:
-        # ВЕТКА 1: Есть цифры/латиница -> запускаем гибридный поиск (Vector + FTS)
-        query = sql.SQL("""
-    WITH semantic_search AS (
-        SELECT
-            chunk_id,
-            1 - (embedding <=> %(vec)s::vector) AS similarity,
-            ROW_NUMBER() OVER (ORDER BY embedding <=> %(vec)s::vector) AS rank
-        FROM {table}
-        ORDER BY embedding <=> %(vec)s::vector
-        LIMIT %(k)s
-    ),
-    keyword_search AS (
-        SELECT
-            chunk_id,
-            ROW_NUMBER() OVER (
-                ORDER BY ts_rank_cd(fts, websearch_to_tsquery(%(cfg)s, %(fts)s)) DESC
-            ) AS rank
-        FROM {table}
-        WHERE fts @@ websearch_to_tsquery(%(cfg)s, %(fts)s)
-        ORDER BY ts_rank_cd(fts, websearch_to_tsquery(%(cfg)s, %(fts)s)) DESC
-        LIMIT %(k)s
-    ),
-    candidates AS (
-        SELECT chunk_id FROM semantic_search
-        UNION
-        SELECT chunk_id FROM keyword_search
-    )
-    SELECT
-        {columns},
-        s.similarity,
-        (COALESCE(1.0 / (60 + s.rank), 0.0)
-         + COALESCE(1.0 / (60 + k.rank), 0.0)) AS hybrid_score
-    FROM candidates c
-    JOIN {table} t          ON t.chunk_id = c.chunk_id
-    LEFT JOIN semantic_search s ON s.chunk_id = c.chunk_id
-    LEFT JOIN keyword_search  k ON k.chunk_id = c.chunk_id
-    ORDER BY hybrid_score DESC
-    LIMIT %(k)s
-""").format(table=sql.Identifier(table_name), columns=COLUMNS)
+    fused: List[Tuple[str, float]] = []
+    for cid in union:
+        score = 0.0
+        if cid in vec:
+            score += 1.0 / (RRF_K + vec[cid][1])
+        if cid in lex:
+            score += 1.0 / (RRF_K + lex[cid])
+        fused.append((cid, score))
+    fused.sort(key=lambda x: x[1], reverse=True)
+    fused = fused[:RECALL_K]
 
-        params = {"vec": query_vector, "fts": fts_query, "cfg": 'english', "k": 25}
-    else:
-        # ВЕТКА 2: Чисто русский вопрос без цифр и латиницы -> обычный векторный поиск
-        query = sql.SQL("""
-    SELECT {columns},
-           1 - (t.embedding <=> %(vec)s::vector) AS similarity,
-           1 - (t.embedding <=> %(vec)s::vector) AS hybrid_score
-    FROM {table} t
-    ORDER BY t.embedding <=> %(vec)s::vector
-    LIMIT %(k)s
-""").format(table=sql.Identifier(table_name), columns=COLUMNS)
+    ids = [cid for cid, _ in fused]
+    mq = _META_SQL.format(table=sql.Identifier(table_name))
+    with connection.cursor() as cur:
+        cur.execute(mq, {"ids": ids})
+        cols = [d[0] for d in cur.description]
+        meta = {row[0]: dict(zip(cols, row)) for row in cur.fetchall()}
 
-        params = {"vec": query_vector, "k": 25}
-
-    from psycopg2.extras import RealDictCursor
-
-    with connection.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(f"SET statement_timeout = {DB_TIMEOUT_MS};")
-        cursor.execute(query, params)
-        results = [dict(r) for r in cursor.fetchall()]
+    results: List[Dict] = []
+    for cid, hscore in fused:
+        row = meta.get(cid)
+        if row is None:
+            continue
+        row["similarity"] = vec[cid][0] if cid in vec else None  # None для BM25-only
+        row["hybrid_score"] = hscore
+        results.append(row)
 
     for r in results:
         sim = r["similarity"]
         sim_str = f"{sim:.4f}" if sim is not None else " None"
         logger.info(
-            "Retrieved %s from %s p.%s (sim=%s, hybrid=%.4f, fts=%r): %s",
+            "Retrieved %s from %s p.%s (sim=%s, hybrid=%.4f): %s",
             r["chunk_id"], r["document_id"], r["page_number"],
-            sim_str, float(r["hybrid_score"]), fts_query,
-            r["text"][:160].replace("\n", " "),
-    )
+            sim_str, r["hybrid_score"], r["text"][:160].replace("\n", " "),
+        )
     return results
-
 
 def rerank_chunks(query, chunks, top_k):
     if not chunks:
