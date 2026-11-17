@@ -55,8 +55,8 @@ def build_chunk_metadata(elements: List[Dict], chunk_index: int, doc_id: str, to
 
 def chunk_elements(
     elements: List[Dict[str, Any]], 
-    chunk_size: int = 500, 
-    overlap: int = 50
+    chunk_size: int = 600, 
+    overlap: int = 60
 ) -> List[Dict[str, Any]]:
     """
     Chunk a flat list of parsed elements.
