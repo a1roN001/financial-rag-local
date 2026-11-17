@@ -29,7 +29,7 @@ from retriever import rerank_chunks
 from config import EMBEDDING_MODEL_NAME, GENERATOR_MODEL, JUDGE_MODEL, JUDGE_BASE_URL, RERANKER_MODEL_NAME
 from ragas.run_config import RunConfig
 from wrapper import CustomE5Embeddings
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from sentence_transformers import SentenceTransformer, CrossEncoder 
 EMBEDDING_MODEL = SentenceTransformer(EMBEDDING_MODEL_NAME)
 EMBEDDING_MODEL_EVAL = CustomE5Embeddings(EMBEDDING_MODEL, model_name=EMBEDDING_MODEL_NAME)
 logging.basicConfig(
@@ -65,14 +65,12 @@ def retrieve_context(question: str, top_k: int) -> list[dict]:
 
 
 def generate_rag_answer(question: str, contexts: List[Dict[str, Any]]) -> str:
-    """Генерирует ответ, передавая словари в build_prompt."""
     if not contexts:
-        return "No relevant information found in the documents."
-    
+        return CANONICAL_REFUSAL
+
     prompt = build_prompt(contexts, question)
-    answer = call_ollama(prompt)
-    
-    return answer
+    raw_answer = call_ollama(prompt)
+    return sanitize_answer(raw_answer)
 
 
 def run_evaluation(
