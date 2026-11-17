@@ -26,12 +26,12 @@ from db import connect
 from retriever import retrieve_similar_chunks
 from rag import build_prompt, call_ollama
 from retriever import rerank_chunks
+from config import EMBEDDING_MODEL_NAME, GENERATOR_MODEL, JUDGE_MODEL, JUDGE_BASE_URL, RERANKER_MODEL_NAME
 from ragas.run_config import RunConfig
 from wrapper import CustomE5Embeddings
-from sentence_transformers import SentenceTransformer
-EMBEDDING_MODEL = SentenceTransformer("intfloat/multilingual-e5-small")
-EMBEDDING_MODEL_EVAL = CustomE5Embeddings(EMBEDDING_MODEL, model_name="intfloat/multilingual-e5-small")
-
+from sentence_transformers import SentenceTransformer, CrossEncoder
+EMBEDDING_MODEL = SentenceTransformer(EMBEDDING_MODEL_NAME)
+EMBEDDING_MODEL_EVAL = CustomE5Embeddings(EMBEDDING_MODEL, model_name=EMBEDDING_MODEL_NAME)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
@@ -78,7 +78,7 @@ def generate_rag_answer(question: str, contexts: List[Dict[str, Any]]) -> str:
 def run_evaluation(
     test_dataset: List[Dict[str, Any]],
     top_k: int,
-    model_name: str = "qwen2.5:7b"
+    model_name: str = GENERATOR_MODEL
 ) -> Dict[str, Any]:
     questions = []
     answers = []
@@ -137,8 +137,8 @@ def run_evaluation(
     # Локальная модель успешно переваривает внутренние запросы Ragas, 
     # которые Groq строго блокирует.
     external_llm = ChatOpenAI(
-    model="gpt-6-luna",          # V4.1-Flash, не deepseek-chat!
-    base_url="https://ai.starimg.ru/v1",
+    model=JUDGE_MODEL,          # V4.1-Flash, не deepseek-chat!
+    base_url=JUDGE_BASE_URL,
     api_key=os.environ["JUDJE_API_KEY"],
     temperature=0.0,
 )

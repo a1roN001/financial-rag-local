@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 from retriever import retrieve_similar_chunks
 from retriever import rerank_chunks
 from db import connect
+from config import RERANKER_MODEL_NAME, DATABASE_URL, NUM_CTX, GENERATOR_MODEL
 from dotenv import load_dotenv
 from tenacity import retry, wait_exponential, stop_after_attempt
 from wrapper import CustomE5Embeddings
@@ -15,7 +16,7 @@ import tiktoken
 load_dotenv()
 logger = logging.getLogger(__name__)
 enc = tiktoken.get_encoding("cl100k_base")
-EMBEDDING_MODEL = CustomE5Embeddings('intfloat/multilingual-e5-small')
+EMBEDDING_MODEL = CustomE5Embeddings(RERANKER_MODEL_NAME)
 SIMILARITY_THRESHOLD = 0.4
 
 def build_prompt(context_chunks: List[Dict], question: str) -> str:
@@ -48,7 +49,7 @@ def build_prompt(context_chunks: List[Dict], question: str) -> str:
 
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=4), stop=stop_after_attempt(3))
-def call_ollama(prompt: str, model: str = "qwen2.5:7b") -> str:
+def call_ollama(prompt: str, model: str = GENERATOR_MODEL) -> str:
     from ollama import Client
     """Call Ollama API and return generated text."""
     
@@ -56,7 +57,7 @@ def call_ollama(prompt: str, model: str = "qwen2.5:7b") -> str:
     response = ollama_client.chat(
         model=model,
         messages=[{'role': 'user', 'content': prompt}],
-        options={"num_ctx": 8192}
+        options={"num_ctx": NUM_CTX}
     )
     return response.message.content
 
@@ -86,4 +87,4 @@ if __name__ == "__main__":
     while True:
         question = input('Enter your ptompt:\n')
         print(answer_question(question=question, 
-                          database_url=os.getenv('DATABASE_URL'))) 
+                          database_url=DATABASE_URL))
