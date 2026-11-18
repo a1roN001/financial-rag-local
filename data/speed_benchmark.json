@@ -1,0 +1,38 @@
+[
+  {
+    "model": "qwen2.5:7b",
+    "count": 5,
+    "median_wall_seconds": 3.3539817000273615,
+    "median_gen_tps": 75.98950019952115,
+    "median_wall_tps_approx": 4.994575734687551,
+    "median_prompt_duration_sec": 0.811373,
+    "median_response_words": 16
+  },
+  {
+    "model": "qwen2.5:7b-instruct-q2_K ",
+    "count": 5,
+    "median_wall_seconds": 3.3431913999374956,
+    "median_gen_tps": 92.75606083560842,
+    "median_wall_tps_approx": 3.1997121795631895,
+    "median_prompt_duration_sec": 1.0551519,
+    "median_response_words": 10
+  },
+  {
+    "model": "qwen2.5:7b-instruct-q3_K_M ",
+    "count": 5,
+    "median_wall_seconds": 4.081867899978533,
+    "median_gen_tps": 77.39008391181078,
+    "median_wall_tps_approx": 9.064477564351012,
+    "median_prompt_duration_sec": 0.9102661,
+    "median_response_words": 37
+  },
+  {
+    "model": "qwen2.5:7b-instruct-q5_K_M ",
+    "count": 5,
+    "median_wall_seconds": 4.801843200111762,
+    "median_gen_tps": 66.22849891782633,
+    "median_wall_tps_approx": 9.163148017614551,
+    "median_prompt_duration_sec": 0.8319915,
+    "median_response_words": 44
+  }
+]
