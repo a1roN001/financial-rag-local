@@ -153,7 +153,7 @@ def build_prompt(context_chunks: List[Dict[str, Any]], question: str) -> str:
 
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=4), stop=stop_after_attempt(3))
-def call_ollama(prompt: str, model: str = "qwen2.5:7b") -> str:
+def call_ollama(prompt: str, model: str = GENERATOR_MODEL) -> str:
     from ollama import Client
 
     client = Client(timeout=120)
