@@ -10,7 +10,6 @@ EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-small"
 RERANKER_MODEL_NAME  = "BAAI/bge-reranker-v2-m3"
 GENERATOR_MODEL      = "qwen2.5:7b"
 JUDGE_MODEL          = "gpt-6-luna"
-JUDGE_BASE_URL       = "https://ai.starimg.ru/v1"
 
 RECALL_K   = 25    # кандидатов из каждой ветки и в пул реранка
 RERANK_K   = 3    # чанков в промпт
