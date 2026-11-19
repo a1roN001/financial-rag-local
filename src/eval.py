@@ -26,7 +26,7 @@ from db import connect
 from retriever import retrieve_similar_chunks
 from rag import build_prompt, call_ollama
 from retriever import rerank_chunks
-from config import EMBEDDING_MODEL_NAME, GENERATOR_MODEL, JUDGE_MODEL, JUDGE_BASE_URL, RERANKER_MODEL_NAME
+from config import EMBEDDING_MODEL_NAME, GENERATOR_MODEL, JUDGE_MODEL, RERANKER_MODEL_NAME
 from ragas.run_config import RunConfig
 from wrapper import CustomE5Embeddings
 from sentence_transformers import SentenceTransformer, CrossEncoder 
@@ -44,6 +44,7 @@ TEST_DATASET_PATH = PROJECT_ROOT / "data" / "single_hop_questions.json"
 RESULTS_PATH = PROJECT_ROOT / "evaluation_results.json"
 load_dotenv()
 
+JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL")
 def load_test_dataset(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
         raise FileNotFoundError(
